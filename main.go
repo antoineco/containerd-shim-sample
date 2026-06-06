@@ -7,7 +7,7 @@ import (
 
 	"shim-sample/shim"
 
-	cdshim "github.com/containerd/containerd/runtime/v2/shim"
+	cdshim "github.com/containerd/containerd/v2/pkg/shim"
 )
 
 const shimName = "com.example.sample.v2"

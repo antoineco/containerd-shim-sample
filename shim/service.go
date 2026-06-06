@@ -12,12 +12,13 @@ import (
 
 	taskv2 "github.com/containerd/containerd/api/runtime/task/v2"
 	tasktypes "github.com/containerd/containerd/api/types/task"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/pkg/shutdown"
-	"github.com/containerd/containerd/protobuf"
-	ptypes "github.com/containerd/containerd/protobuf/types"
-	"github.com/containerd/containerd/runtime/v2/shim"
+	"github.com/containerd/containerd/v2/pkg/protobuf"
+	ptypes "github.com/containerd/containerd/v2/pkg/protobuf/types"
+	"github.com/containerd/containerd/v2/pkg/shim"
+	"github.com/containerd/containerd/v2/pkg/shutdown"
+	"github.com/containerd/errdefs"
+	"github.com/containerd/errdefs/pkg/errgrpc"
+	"github.com/containerd/log"
 	"github.com/containerd/ttrpc"
 
 	"shim-sample/io"
@@ -30,17 +31,14 @@ func newTaskService(ss shutdown.Service) (*timePrintTaskService, error) {
 		ss:    ss,
 	}
 
-	sockAddr, err := shim.ReadAddress("address")
-	if err != nil {
-		return nil, fmt.Errorf("reading socket address from address file: %w", err)
+	if sockAddr, err := shim.ReadAddress("address"); err == nil {
+		ss.RegisterCallback(func(context.Context) error {
+			if err := shim.RemoveSocket(sockAddr); err != nil {
+				return fmt.Errorf("removing shim socket on shutdown: %w", err)
+			}
+			return nil
+		})
 	}
-
-	ss.RegisterCallback(func(context.Context) error {
-		if err := shim.RemoveSocket(sockAddr); err != nil {
-			return fmt.Errorf("removing shim socket on shutdown: %w", err)
-		}
-		return nil
-	})
 
 	return s, nil
 }
@@ -69,13 +67,13 @@ type timePrintTaskService struct {
 }
 
 var (
-	_ shim.TTRPCService  = (*timePrintTaskService)(nil)
-	_ taskv2.TaskService = (*timePrintTaskService)(nil)
+	_ shim.TTRPCService       = (*timePrintTaskService)(nil)
+	_ taskv2.TTRPCTaskService = (*timePrintTaskService)(nil)
 )
 
 // RegisterTTRPC registers this TTRPC service with the given TTRPC server.
 func (s *timePrintTaskService) RegisterTTRPC(srv *ttrpc.Server) error {
-	taskv2.RegisterTaskService(srv, s)
+	taskv2.RegisterTTRPCTaskService(srv, s)
 	return nil
 }
 
@@ -220,7 +218,7 @@ func (s *timePrintTaskService) Delete(ctx context.Context, r *taskv2.DeleteReque
 	}
 
 	if proc.exitTime.IsZero() {
-		return nil, errdefs.ToGRPCf(errdefs.ErrFailedPrecondition, "init process %d is not done yet", proc.pid)
+		return nil, errgrpc.ToGRPCf(errdefs.ErrFailedPrecondition, "init process %d is not done yet", proc.pid)
 	}
 
 	delete(s.procs, r.ID)

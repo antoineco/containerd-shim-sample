@@ -3,6 +3,7 @@ package shim
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,14 +12,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/pkg/schedcore"
-	"github.com/containerd/containerd/runtime/v2/shim"
+	"github.com/containerd/containerd/api/types"
+	"github.com/containerd/containerd/v2/pkg/namespaces"
+	"github.com/containerd/containerd/v2/pkg/schedcore"
+	"github.com/containerd/containerd/v2/pkg/shim"
+	"github.com/containerd/log"
 )
 
 // containerd-specific environment variables set while invoking the shim's
 // start command.
-// https://github.com/containerd/containerd/tree/v1.7.3/runtime/v2#start
+// https://github.com/containerd/containerd/tree/v2.3.1/core/runtime/v2#start
 const (
 	contdShimEnvShedCore = "SCHED_CORE"
 )
@@ -48,40 +51,19 @@ func (m *manager) Name() string {
 
 // Start starts a shim process.
 // It implements the shim's "start" command.
-// https://github.com/containerd/containerd/tree/v1.7.3/runtime/v2#start
-func (*manager) Start(ctx context.Context, containerID string, opts shim.StartOpts) (addr string, retErr error) {
-	self, err := os.Executable()
+// https://github.com/containerd/containerd/tree/v2.3.1/core/runtime/v2#start
+func (*manager) Start(ctx context.Context, containerID string, opts shim.StartOpts) (params shim.BootstrapParams, retErr error) {
+	params.Version = 2
+	params.Protocol = "ttrpc"
+
+	cmd, err := newShimCommand(ctx, containerID, opts.Address, opts.Debug)
 	if err != nil {
-		return "", fmt.Errorf("getting executable of current process: %w", err)
+		return params, fmt.Errorf("creating shim command: %w", err)
 	}
 
-	cwd, err := os.Getwd()
+	sockAddr, err := shim.SocketAddress(ctx, opts.Address, containerID, false)
 	if err != nil {
-		return "", fmt.Errorf("getting current working directory: %w", err)
-	}
-
-	var args []string
-	if opts.Debug {
-		args = append(args, "-debug")
-	}
-
-	cmdCfg := &shim.CommandConfig{
-		Runtime:      self,
-		Address:      opts.Address,
-		TTRPCAddress: opts.TTRPCAddress,
-		Path:         cwd,
-		SchedCore:    os.Getenv(contdShimEnvShedCore) != "",
-		Args:         args,
-	}
-
-	cmd, err := shim.Command(ctx, cmdCfg)
-	if err != nil {
-		return "", fmt.Errorf("creating shim command: %w", err)
-	}
-
-	sockAddr, err := shim.SocketAddress(ctx, opts.Address, containerID)
-	if err != nil {
-		return "", fmt.Errorf("getting a socket address: %w", err)
+		return params, fmt.Errorf("getting a socket address: %w", err)
 	}
 
 	socket, err := shim.NewSocket(sockAddr)
@@ -92,21 +74,19 @@ func (*manager) Start(ctx context.Context, containerID string, opts shim.StartOp
 		// grouping functionality where the new process should be run with the same
 		// shim as an existing container
 		case !shim.SocketEaddrinuse(err):
-			return "", fmt.Errorf("creating new shim socket: %w", err)
+			return params, fmt.Errorf("creating new shim socket: %w", err)
 
 		case shim.CanConnect(sockAddr):
-			if err := shim.WriteAddress("address", sockAddr); err != nil {
-				return "", fmt.Errorf("writing socket address file: %w", err)
-			}
-			return sockAddr, nil
+			params.Address = sockAddr
+			return params, nil
 		}
 
 		if err := shim.RemoveSocket(sockAddr); err != nil {
-			return "", fmt.Errorf("removing pre-existing shim socket: %w", err)
+			return params, fmt.Errorf("removing pre-existing shim socket: %w", err)
 		}
 
 		if socket, err = shim.NewSocket(sockAddr); err != nil {
-			return "", fmt.Errorf("creating new shim socket (second attempt): %w", err)
+			return params, fmt.Errorf("creating new shim socket (second attempt): %w", err)
 		}
 	}
 
@@ -121,28 +101,24 @@ func (*manager) Start(ctx context.Context, containerID string, opts shim.StartOp
 		}
 	}()
 
-	if err := shim.WriteAddress("address", sockAddr); err != nil {
-		return "", fmt.Errorf("writing socket address file: %w", err)
-	}
-
 	sockF, err := socket.File()
 	if err != nil {
-		return "", fmt.Errorf("getting shim socket file descriptor: %w", err)
+		return params, fmt.Errorf("getting shim socket file descriptor: %w", err)
 	}
 
 	cmd.ExtraFiles = append(cmd.ExtraFiles, sockF)
 
 	runtime.LockOSThread()
 
-	if cmdCfg.SchedCore {
+	if os.Getenv(contdShimEnvShedCore) != "" {
 		if err := schedcore.Create(schedcore.ProcessGroup); err != nil {
-			return "", fmt.Errorf("enabling sched core support: %w", err)
+			return params, fmt.Errorf("enabling sched core support: %w", err)
 		}
 	}
 
 	if err := cmd.Start(); err != nil {
 		sockF.Close()
-		return "", fmt.Errorf("starting shim command: %w", err)
+		return params, fmt.Errorf("starting shim command: %w", err)
 	}
 
 	runtime.UnlockOSThread()
@@ -164,15 +140,16 @@ func (*manager) Start(ctx context.Context, containerID string, opts shim.StartOp
 	}()
 
 	if err := shim.AdjustOOMScore(cmd.Process.Pid); err != nil {
-		return "", fmt.Errorf("adjusting shim process OOM score: %w", err)
+		return params, fmt.Errorf("adjusting shim process OOM score: %w", err)
 	}
 
-	return sockAddr, nil
+	params.Address = sockAddr
+	return params, nil
 }
 
 // Stop stops a shim process.
 // It implements the shim's "delete" command.
-// https://github.com/containerd/containerd/tree/v1.7.3/runtime/v2#delete
+// https://github.com/containerd/containerd/tree/v2.3.1/core/runtime/v2#delete
 func (*manager) Stop(ctx context.Context, containerID string) (shim.StopStatus, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -201,6 +178,46 @@ func (*manager) Stop(ctx context.Context, containerID string) (shim.StopStatus, 
 		ExitedAt:   time.Now(),
 		ExitStatus: int(exitCodeSignal + syscall.SIGKILL),
 	}, nil
+}
+
+// Info returns details about the runtime plugin.
+// It implements the shim's "-info" flag.
+// https://github.com/containerd/containerd/tree/v2.3.1/core/runtime/v2#-info
+func (m *manager) Info(ctx context.Context, _ io.Reader) (*types.RuntimeInfo, error) {
+	return &types.RuntimeInfo{
+		Name: m.name,
+	}, nil
+}
+
+// newShimCommand returns the shim command to be executed.
+func newShimCommand(ctx context.Context, id, containerdAddress string, debug bool) (*exec.Cmd, error) {
+	ns, err := namespaces.NamespaceRequired(ctx)
+	if err != nil {
+		return nil, err
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("getting executable of current process: %w", err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("getting current working directory: %w", err)
+	}
+	args := []string{
+		"-namespace", ns,
+		"-id", id,
+		"-address", containerdAddress,
+	}
+	if debug {
+		args = append(args, "-debug")
+	}
+	cmd := exec.Command(self, args...)
+	cmd.Dir = cwd
+	cmd.Env = append(os.Environ(), "GOMAXPROCS=4")
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
+	return cmd, nil
 }
 
 // readPidFile reads the pid file at the provided path and returns the pid it

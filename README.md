@@ -1,6 +1,6 @@
 # containerd runtime v2 shim sample
 
-A sample implementation of a [runtime v2 shim][cd-rv2] for containerd, over the [ttrpc][ttrpc] protocol.
+A sample implementation of a [runtime v2 shim][cd-rv2] for containerd, over the [ttrpc] protocol.
 
 It was built for educational purposes and is meant to emphasize the following aspects of a shim's responsibilities:
 
@@ -50,7 +50,7 @@ As a byproduct of its reduced scope, the shim also deliberately leaves [some RPC
    > available on the Docker Hub:
    >
    > ```sh
-   > sudo ctr image pull docker.io/library/busybox:1.36
+   > sudo ctr image pull docker.io/library/busybox:1.38
    > ```
 
 1. Lastly, create (but don't run) a container via containerd using the `ctr` CLI tool, explicitly using the
@@ -59,7 +59,7 @@ As a byproduct of its reduced scope, the shim also deliberately leaves [some RPC
    ```sh
    sudo ctr container create \
      --runtime com.example.sample.v2 \
-     docker.io/library/busybox:1.36 \
+     docker.io/library/busybox:1.38 \
      shim-test
    ```
 
@@ -74,7 +74,7 @@ containerd:
 ```console
 $ sudo ctr container ls
 CONTAINER    IMAGE                             RUNTIME
-shim-test    docker.io/library/busybox:1.36    com.example.sample.v2
+shim-test    docker.io/library/busybox:1.38    com.example.sample.v2
 ```
 
 **Here is where the responsibility of the shim begins.**
@@ -89,7 +89,7 @@ $ sudo ctr task start --detach shim-test
 
 > **Note**  
 > You can learn about the separation between a _Container_ and a _Task_ at [Getting started with containerd / Creating a
-> running Task].
+> running Task][cd-task].
 
 The corresponding task can be listed by `ctr` with its associated PID and status:
 
@@ -174,11 +174,11 @@ This time around, you could for example either start the task in _attached_ mode
 `attach` sub-command, and observe that it exits with the code 130 upon sending it SIGINT (2) with the key combination
 `CTRL-C` (128 + 2 = 130).
 
-[cd-rv2]: https://github.com/containerd/containerd/blob/v1.7.3/runtime/v2/README.md
-[cd-rv2-bin]: https://github.com/containerd/containerd/blob/v1.7.3/runtime/v2/README.md#binary-naming
-[cd-rv2-taskproto]: https://github.com/containerd/containerd/blob/v1.7.3/api/runtime/task/v2/shim.proto#L29-L51
-[cd-task]: https://github.com/containerd/containerd/blob/v1.7.3/docs/getting-started.md#creating-a-running-task
-[cd-release]: https://github.com/containerd/containerd/releases/tag/v1.7.3
-[nctl-release]: https://github.com/containerd/nerdctl/releases/tag/v1.5.0
-[ttrpc]: https://github.com/containerd/ttrpc/blob/v1.2.2/README.md
+[cd-rv2]: https://github.com/containerd/containerd/blob/v2.1.8/core/runtime/v2/README.md
+[cd-rv2-bin]: https://github.com/containerd/containerd/blob/v2.1.8/core/runtime/v2/README.md#invoking-runtimes
+[cd-rv2-taskproto]: https://github.com/containerd/containerd/blob/v2.1.8/api/runtime/task/v2/shim.proto#L29-L51
+[cd-task]: https://github.com/containerd/containerd/blob/v2.1.8/docs/getting-started.md#creating-a-running-task
+[cd-release]: https://github.com/containerd/containerd/releases/tag/v2.1.8
+[nctl-release]: https://github.com/containerd/nerdctl/releases/tag/v2.3.1
+[ttrpc]: https://github.com/containerd/ttrpc/blob/v1.2.8/README.md
 [go-dl]: https://go.dev/dl/

@@ -3,20 +3,22 @@ package shim
 import (
 	"fmt"
 
-	"github.com/containerd/containerd/pkg/shutdown"
-	"github.com/containerd/containerd/plugin"
+	"github.com/containerd/containerd/v2/pkg/shutdown"
+	"github.com/containerd/containerd/v2/plugins"
+	"github.com/containerd/plugin"
+	"github.com/containerd/plugin/registry"
 )
 
 // RegisterPlugin registers this plugin with containerd.
 func RegisterPlugin() {
-	plugin.Register(&plugin.Registration{
-		Type: plugin.TTRPCPlugin,
+	registry.Register(&plugin.Registration{
+		Type: plugins.TTRPCPlugin,
 		ID:   "task",
 		Requires: []plugin.Type{
-			plugin.InternalPlugin,
+			plugins.InternalPlugin,
 		},
-		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
-			ss, err := ic.GetByID(plugin.InternalPlugin, "shutdown")
+		InitFn: func(ic *plugin.InitContext) (any, error) {
+			ss, err := ic.GetByID(plugins.InternalPlugin, "shutdown")
 			if err != nil {
 				return nil, fmt.Errorf("getting shutdown internal plugin: %w", err)
 			}
