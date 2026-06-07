@@ -18,5 +18,5 @@ func main() {
 
 	shim.RegisterPlugin()
 
-	cdshim.Run(ctx, shim.NewManager(shimName))
+	cdshim.RunShim(ctx, shim.NewManager(shimName))
 }

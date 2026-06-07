@@ -12,7 +12,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/containerd/containerd/api/runtime/bootstrap/v1"
 	"github.com/containerd/containerd/api/types"
+	"github.com/containerd/containerd/v2/defaults"
 	"github.com/containerd/containerd/v2/pkg/namespaces"
 	"github.com/containerd/containerd/v2/pkg/schedcore"
 	"github.com/containerd/containerd/v2/pkg/shim"
@@ -32,7 +34,7 @@ const initPidFile = "init.pid"
 // https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_21_18
 const exitCodeSignal = 128
 
-// NewManager returns a new shim.Manager.
+// NewManager returns a new shim manager.
 func NewManager(name string) *manager {
 	return &manager{name: name}
 }
@@ -42,7 +44,7 @@ type manager struct {
 	name string
 }
 
-var _ shim.Manager = (*manager)(nil)
+var _ shim.Shim = (*manager)(nil)
 
 // Name returns the name of the shim.
 func (m *manager) Name() string {
@@ -52,18 +54,28 @@ func (m *manager) Name() string {
 // Start starts a shim process.
 // It implements the shim's "start" command.
 // https://github.com/containerd/containerd/tree/v2.3.1/core/runtime/v2#start
-func (*manager) Start(ctx context.Context, containerID string, opts shim.StartOpts) (params shim.BootstrapParams, retErr error) {
-	params.Version = 2
-	params.Protocol = "ttrpc"
-
-	cmd, err := newShimCommand(ctx, containerID, opts.Address, opts.Debug)
-	if err != nil {
-		return params, fmt.Errorf("creating shim command: %w", err)
+func (*manager) Start(ctx context.Context, params *bootstrap.BootstrapParams) (_ *bootstrap.BootstrapResult, retErr error) {
+	res := &bootstrap.BootstrapResult{
+		Version:  2,
+		Protocol: "ttrpc",
 	}
 
-	sockAddr, err := shim.SocketAddress(ctx, opts.Address, containerID, false)
+	id := params.GetInstanceID()
+	addr := params.GetContainerdGrpcAddress()
+	debug := params.GetLogLevel() <= bootstrap.LogLevel_LOG_LEVEL_DEBUG
+
+	cmd, err := newShimCommand(ctx, id, addr, debug)
 	if err != nil {
-		return params, fmt.Errorf("getting a socket address: %w", err)
+		return nil, fmt.Errorf("creating shim command: %w", err)
+	}
+
+	sockRoot := params.GetSocketDir()
+	if sockRoot == "" {
+		sockRoot = filepath.Join(defaults.DefaultStateDir, "s") // ref. [shim.SocketAddress]
+	}
+	sockAddr, err := shim.CreateSocketAddress(ctx, sockRoot, addr, id, false)
+	if err != nil {
+		return nil, fmt.Errorf("getting a socket address: %w", err)
 	}
 
 	socket, err := shim.NewSocket(sockAddr)
@@ -74,19 +86,19 @@ func (*manager) Start(ctx context.Context, containerID string, opts shim.StartOp
 		// grouping functionality where the new process should be run with the same
 		// shim as an existing container
 		case !shim.SocketEaddrinuse(err):
-			return params, fmt.Errorf("creating new shim socket: %w", err)
+			return nil, fmt.Errorf("creating new shim socket: %w", err)
 
 		case shim.CanConnect(sockAddr):
-			params.Address = sockAddr
-			return params, nil
+			res.Address = sockAddr
+			return res, nil
 		}
 
 		if err := shim.RemoveSocket(sockAddr); err != nil {
-			return params, fmt.Errorf("removing pre-existing shim socket: %w", err)
+			return nil, fmt.Errorf("removing pre-existing shim socket: %w", err)
 		}
 
 		if socket, err = shim.NewSocket(sockAddr); err != nil {
-			return params, fmt.Errorf("creating new shim socket (second attempt): %w", err)
+			return nil, fmt.Errorf("creating new shim socket (second attempt): %w", err)
 		}
 	}
 
@@ -103,7 +115,7 @@ func (*manager) Start(ctx context.Context, containerID string, opts shim.StartOp
 
 	sockF, err := socket.File()
 	if err != nil {
-		return params, fmt.Errorf("getting shim socket file descriptor: %w", err)
+		return nil, fmt.Errorf("getting shim socket file descriptor: %w", err)
 	}
 
 	cmd.ExtraFiles = append(cmd.ExtraFiles, sockF)
@@ -112,13 +124,13 @@ func (*manager) Start(ctx context.Context, containerID string, opts shim.StartOp
 
 	if os.Getenv(contdShimEnvShedCore) != "" {
 		if err := schedcore.Create(schedcore.ProcessGroup); err != nil {
-			return params, fmt.Errorf("enabling sched core support: %w", err)
+			return nil, fmt.Errorf("enabling sched core support: %w", err)
 		}
 	}
 
 	if err := cmd.Start(); err != nil {
 		sockF.Close()
-		return params, fmt.Errorf("starting shim command: %w", err)
+		return nil, fmt.Errorf("starting shim command: %w", err)
 	}
 
 	runtime.UnlockOSThread()
@@ -140,11 +152,11 @@ func (*manager) Start(ctx context.Context, containerID string, opts shim.StartOp
 	}()
 
 	if err := shim.AdjustOOMScore(cmd.Process.Pid); err != nil {
-		return params, fmt.Errorf("adjusting shim process OOM score: %w", err)
+		return nil, fmt.Errorf("adjusting shim process OOM score: %w", err)
 	}
 
-	params.Address = sockAddr
-	return params, nil
+	res.Address = sockAddr
+	return res, nil
 }
 
 // Stop stops a shim process.
