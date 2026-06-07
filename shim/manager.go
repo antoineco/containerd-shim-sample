@@ -56,7 +56,7 @@ func (m *manager) Name() string {
 // https://github.com/containerd/containerd/tree/v2.3.1/core/runtime/v2#start
 func (*manager) Start(ctx context.Context, params *bootstrap.BootstrapParams) (_ *bootstrap.BootstrapResult, retErr error) {
 	res := &bootstrap.BootstrapResult{
-		Version:  2,
+		Version:  3,
 		Protocol: "ttrpc",
 	}
 

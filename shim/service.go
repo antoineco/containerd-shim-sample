@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	taskv2 "github.com/containerd/containerd/api/runtime/task/v2"
+	"github.com/containerd/containerd/api/runtime/task/v3"
 	tasktypes "github.com/containerd/containerd/api/types/task"
 	"github.com/containerd/containerd/v2/pkg/protobuf"
 	ptypes "github.com/containerd/containerd/v2/pkg/protobuf/types"
@@ -24,7 +24,7 @@ import (
 	"shim-sample/io"
 )
 
-// newTaskService returns a new taskv2.TaskService.
+// newTaskService returns a new [task.TTRPCTaskService].
 func newTaskService(ss shutdown.Service) (*timePrintTaskService, error) {
 	s := &timePrintTaskService{
 		procs: make(initProcByTaskID, 1),
@@ -57,7 +57,7 @@ type initProcess struct {
 	stdout string
 }
 
-// timePrintTaskService is an implementation of a containerd taskv2.TaskService
+// timePrintTaskService is an implementation of a containerd [task.TTRPCTaskService]
 // which prints the current time at regular intervals.
 type timePrintTaskService struct {
 	m     sync.RWMutex
@@ -67,18 +67,18 @@ type timePrintTaskService struct {
 }
 
 var (
-	_ shim.TTRPCService       = (*timePrintTaskService)(nil)
-	_ taskv2.TTRPCTaskService = (*timePrintTaskService)(nil)
+	_ shim.TTRPCService     = (*timePrintTaskService)(nil)
+	_ task.TTRPCTaskService = (*timePrintTaskService)(nil)
 )
 
 // RegisterTTRPC registers this TTRPC service with the given TTRPC server.
 func (s *timePrintTaskService) RegisterTTRPC(srv *ttrpc.Server) error {
-	taskv2.RegisterTTRPCTaskService(srv, s)
+	task.RegisterTTRPCTaskService(srv, s)
 	return nil
 }
 
 // Create creates a new task and runs its init process.
-func (s *timePrintTaskService) Create(ctx context.Context, r *taskv2.CreateTaskRequest) (_ *taskv2.CreateTaskResponse, retErr error) {
+func (s *timePrintTaskService) Create(ctx context.Context, r *task.CreateTaskRequest) (_ *task.CreateTaskResponse, retErr error) {
 	log.G(ctx).Debugf("create id:%s", r.ID)
 
 	s.m.Lock()
@@ -182,13 +182,13 @@ func (s *timePrintTaskService) Create(ctx context.Context, r *taskv2.CreateTaskR
 		stdout:  r.Stdout,
 	}
 
-	return &taskv2.CreateTaskResponse{
+	return &task.CreateTaskResponse{
 		Pid: uint32(pid),
 	}, nil
 }
 
 // Start starts the primary user process inside the task.
-func (s *timePrintTaskService) Start(ctx context.Context, r *taskv2.StartRequest) (*taskv2.StartResponse, error) {
+func (s *timePrintTaskService) Start(ctx context.Context, r *task.StartRequest) (*task.StartResponse, error) {
 	log.G(ctx).Debugf("start id:%s execid:%s", r.ID, r.ExecID)
 
 	// we do not support starting a previously stopped task, and the init
@@ -201,13 +201,13 @@ func (s *timePrintTaskService) Start(ctx context.Context, r *taskv2.StartRequest
 		return nil, fmt.Errorf("task not created: %w", errdefs.ErrNotFound)
 	}
 
-	return &taskv2.StartResponse{
+	return &task.StartResponse{
 		Pid: uint32(proc.pid),
 	}, nil
 }
 
 // Delete deletes a task.
-func (s *timePrintTaskService) Delete(ctx context.Context, r *taskv2.DeleteRequest) (*taskv2.DeleteResponse, error) {
+func (s *timePrintTaskService) Delete(ctx context.Context, r *task.DeleteRequest) (*task.DeleteResponse, error) {
 	log.G(ctx).Debugf("delete id:%s execid:%s", r.ID, r.ExecID)
 
 	s.m.Lock()
@@ -223,7 +223,7 @@ func (s *timePrintTaskService) Delete(ctx context.Context, r *taskv2.DeleteReque
 
 	delete(s.procs, r.ID)
 
-	return &taskv2.DeleteResponse{
+	return &task.DeleteResponse{
 		Pid:        uint32(proc.pid),
 		ExitStatus: uint32(proc.exitStatus),
 		ExitedAt:   protobuf.ToTimestamp(proc.exitTime),
@@ -231,19 +231,19 @@ func (s *timePrintTaskService) Delete(ctx context.Context, r *taskv2.DeleteReque
 }
 
 // Exec executes an additional process inside the task.
-func (*timePrintTaskService) Exec(ctx context.Context, r *taskv2.ExecProcessRequest) (*ptypes.Empty, error) {
+func (*timePrintTaskService) Exec(ctx context.Context, r *task.ExecProcessRequest) (*ptypes.Empty, error) {
 	log.G(ctx).Debugf("exec id:%s execid:%s", r.ID, r.ExecID)
 	return nil, errdefs.ErrNotImplemented
 }
 
 // ResizePty resizes the pty of a process.
-func (*timePrintTaskService) ResizePty(ctx context.Context, r *taskv2.ResizePtyRequest) (*ptypes.Empty, error) {
+func (*timePrintTaskService) ResizePty(ctx context.Context, r *task.ResizePtyRequest) (*ptypes.Empty, error) {
 	log.G(ctx).Debugf("resizepty id:%s execid:%s", r.ID, r.ExecID)
 	return nil, errdefs.ErrNotImplemented
 }
 
 // State returns the runtime state of a process.
-func (s *timePrintTaskService) State(ctx context.Context, r *taskv2.StateRequest) (*taskv2.StateResponse, error) {
+func (s *timePrintTaskService) State(ctx context.Context, r *task.StateRequest) (*task.StateResponse, error) {
 	log.G(ctx).Debugf("state id:%s execid:%s", r.ID, r.ExecID)
 
 	s.m.RLock()
@@ -258,7 +258,7 @@ func (s *timePrintTaskService) State(ctx context.Context, r *taskv2.StateRequest
 		status = tasktypes.Status_STOPPED
 	}
 
-	return &taskv2.StateResponse{
+	return &task.StateResponse{
 		ID:         r.ID,
 		Pid:        uint32(proc.pid),
 		Status:     status,
@@ -269,19 +269,19 @@ func (s *timePrintTaskService) State(ctx context.Context, r *taskv2.StateRequest
 }
 
 // Pause pauses a task.
-func (*timePrintTaskService) Pause(ctx context.Context, r *taskv2.PauseRequest) (*ptypes.Empty, error) {
+func (*timePrintTaskService) Pause(ctx context.Context, r *task.PauseRequest) (*ptypes.Empty, error) {
 	log.G(ctx).Debugf("pause id:%s", r.ID)
 	return nil, errdefs.ErrNotImplemented
 }
 
 // Resume resumes a task.
-func (*timePrintTaskService) Resume(ctx context.Context, r *taskv2.ResumeRequest) (*ptypes.Empty, error) {
+func (*timePrintTaskService) Resume(ctx context.Context, r *task.ResumeRequest) (*ptypes.Empty, error) {
 	log.G(ctx).Debugf("resume id:%s", r.ID)
 	return nil, errdefs.ErrNotImplemented
 }
 
 // Kill kills a process.
-func (s *timePrintTaskService) Kill(ctx context.Context, r *taskv2.KillRequest) (*ptypes.Empty, error) {
+func (s *timePrintTaskService) Kill(ctx context.Context, r *task.KillRequest) (*ptypes.Empty, error) {
 	log.G(ctx).Debugf("kill id:%s execid:%s", r.ID, r.ExecID)
 
 	s.m.RLock()
@@ -307,25 +307,25 @@ func (s *timePrintTaskService) Kill(ctx context.Context, r *taskv2.KillRequest) 
 }
 
 // Pids returns all pids inside a task.
-func (s *timePrintTaskService) Pids(ctx context.Context, r *taskv2.PidsRequest) (*taskv2.PidsResponse, error) {
+func (s *timePrintTaskService) Pids(ctx context.Context, r *task.PidsRequest) (*task.PidsResponse, error) {
 	log.G(ctx).Debugf("pids id:%s", r.ID)
 	return nil, errdefs.ErrNotImplemented
 }
 
 // CloseIO closes the I/O of a process.
-func (*timePrintTaskService) CloseIO(ctx context.Context, r *taskv2.CloseIORequest) (*ptypes.Empty, error) {
+func (*timePrintTaskService) CloseIO(ctx context.Context, r *task.CloseIORequest) (*ptypes.Empty, error) {
 	log.G(ctx).Debugf("closeio id:%s execid:%s", r.ID, r.ExecID)
 	return nil, errdefs.ErrNotImplemented
 }
 
 // Checkpoint creates a checkpoint of a task.
-func (*timePrintTaskService) Checkpoint(ctx context.Context, r *taskv2.CheckpointTaskRequest) (*ptypes.Empty, error) {
+func (*timePrintTaskService) Checkpoint(ctx context.Context, r *task.CheckpointTaskRequest) (*ptypes.Empty, error) {
 	log.G(ctx).Debugf("checkpoint id:%s", r.ID)
 	return nil, errdefs.ErrNotImplemented
 }
 
 // Connect returns the shim information of the underlying service.
-func (s *timePrintTaskService) Connect(ctx context.Context, r *taskv2.ConnectRequest) (*taskv2.ConnectResponse, error) {
+func (s *timePrintTaskService) Connect(ctx context.Context, r *task.ConnectRequest) (*task.ConnectResponse, error) {
 	log.G(ctx).Debugf("connect id:%s", r.ID)
 
 	s.m.RLock()
@@ -335,14 +335,14 @@ func (s *timePrintTaskService) Connect(ctx context.Context, r *taskv2.ConnectReq
 		return nil, fmt.Errorf("task not created: %w", errdefs.ErrNotFound)
 	}
 
-	return &taskv2.ConnectResponse{
+	return &task.ConnectResponse{
 		ShimPid: uint32(os.Getpid()),
 		TaskPid: uint32(proc.pid),
 	}, nil
 }
 
 // Shutdown is called after the underlying resources of the shim are cleaned up and the service can be stopped.
-func (s *timePrintTaskService) Shutdown(ctx context.Context, r *taskv2.ShutdownRequest) (*ptypes.Empty, error) {
+func (s *timePrintTaskService) Shutdown(ctx context.Context, r *task.ShutdownRequest) (*ptypes.Empty, error) {
 	log.G(ctx).Debugf("shutdown id:%s", r.ID)
 
 	s.ss.Shutdown()
@@ -350,19 +350,19 @@ func (s *timePrintTaskService) Shutdown(ctx context.Context, r *taskv2.ShutdownR
 }
 
 // Stats returns container level system stats for a task and its processes.
-func (*timePrintTaskService) Stats(ctx context.Context, r *taskv2.StatsRequest) (*taskv2.StatsResponse, error) {
+func (*timePrintTaskService) Stats(ctx context.Context, r *task.StatsRequest) (*task.StatsResponse, error) {
 	log.G(ctx).Debugf("stats id:%s", r.ID)
 	return nil, errdefs.ErrNotImplemented
 }
 
 // Update updates the live task.
-func (*timePrintTaskService) Update(ctx context.Context, r *taskv2.UpdateTaskRequest) (*ptypes.Empty, error) {
+func (*timePrintTaskService) Update(ctx context.Context, r *task.UpdateTaskRequest) (*ptypes.Empty, error) {
 	log.G(ctx).Debugf("update id:%s", r.ID)
 	return nil, errdefs.ErrNotImplemented
 }
 
 // Wait waits for a process to exit while attached to a task.
-func (s *timePrintTaskService) Wait(ctx context.Context, r *taskv2.WaitRequest) (*taskv2.WaitResponse, error) {
+func (s *timePrintTaskService) Wait(ctx context.Context, r *task.WaitRequest) (*task.WaitResponse, error) {
 	log.G(ctx).Debugf("wait id:%s execid:%s", r.ID, r.ExecID)
 
 	doneCtx, err := func() (context.Context, error) {
@@ -391,7 +391,7 @@ func (s *timePrintTaskService) Wait(ctx context.Context, r *taskv2.WaitRequest) 
 		return nil, fmt.Errorf("task was removed: %w", errdefs.ErrNotFound)
 	}
 
-	return &taskv2.WaitResponse{
+	return &task.WaitResponse{
 		ExitStatus: uint32(proc.exitStatus),
 		ExitedAt:   protobuf.ToTimestamp(proc.exitTime),
 	}, nil
